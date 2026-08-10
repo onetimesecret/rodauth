@@ -1,6 +1,16 @@
 require_relative 'spec_helper'
 
 describe 'Rodauth' do
+  it "should not include nil instance variables in inspect output" do
+    rodauth{}
+    roda do |r|
+      rodauth.inspect
+    end
+
+    visit '/'
+    page.body.wont_include "=nil"
+  end if RUBY_VERSION >= "4"
+
   it "should keep private methods private when overridden" do
     rodauth do
       use_database_authentication_functions? false
@@ -72,6 +82,27 @@ describe 'Rodauth' do
 
     visit '/login'
     page.title.must_equal 'Foo Login'
+  end
+
+  it "should support transaction_opts" do
+    savepoint = false
+    rodauth do
+      enable :login
+      transaction_opts{{:savepoint => savepoint}}
+    end
+    roda do |r|
+      DB.synchronize do  |c|
+        savepoint_level = DB.send(:savepoint_level, c)
+        rodauth.send(:transaction){|c| savepoint_level == DB.send(:savepoint_level, c)}.to_s
+      end
+    end
+
+    visit '/'
+    page.body.must_equal "true"
+
+    savepoint = true
+    visit '/'
+    page.body.must_equal "false"
   end
 
   it "should disabled setting default_fixed_locals if use_template_fixed_locals? false" do
@@ -931,7 +962,7 @@ describe 'Rodauth' do
   it "should support :csrf=>false and :flash=>false and :render=> false plugin options" do
     c = Class.new(Roda)
     c.plugin(:rodauth, :csrf=>false, :flash=>false, :render=>false){}
-    c.route{}
+    c.route{|_|}
     c.instance_variable_get(:@middleware).length.must_equal 0
     c.ancestors.map(&:to_s).wont_include 'Roda::RodaPlugins::Render::InstanceMethods'
     c.ancestors.map(&:to_s).wont_include 'Roda::RodaPlugins::Flash::InstanceMethods'

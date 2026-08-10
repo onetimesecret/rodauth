@@ -35,7 +35,7 @@ module Rodauth
     auth_value_method :accounts_table, :accounts
     auth_value_method :cache_templates, true
     auth_value_method :check_csrf_block, nil
-    auth_value_method :check_csrf_opts, {}.freeze
+    auth_value_method :check_csrf_opts, OPTS
     auth_value_method :default_redirect, '/'
     auth_value_method :convert_token_id_to_integer?, nil
     flash_key :flash_error_key, :error
@@ -73,9 +73,10 @@ module Rodauth
     auth_value_method :mark_input_fields_with_inputmode?, true
     auth_value_method :skip_status_checks?, true
     translatable_method :strftime_format, '%F %T'
-    auth_value_method :template_opts, {}.freeze
+    auth_value_method :template_opts, OPTS
     auth_value_method :title_instance_variable, nil 
     auth_value_method :token_separator, "_"
+    auth_value_method :transaction_opts, OPTS
     auth_value_method :unmatched_field_error_status, 422
     auth_value_method :unopen_account_error_status, 403
     translatable_method :unverified_account_message, "unverified account, please verify account before logging in"
@@ -218,7 +219,7 @@ module Rodauth
       end
     end
 
-    def input_field_string(param, id, opts={})
+    def input_field_string(param, id, opts=OPTS)
       type = opts.fetch(:type, "text")
 
       unless type == "password"
@@ -449,7 +450,7 @@ module Rodauth
       _template_opts(opts, 'button')
     end
 
-    def button(value, opts={})
+    def button(value, opts=OPTS)
       scope.render(button_opts(value, opts))
     end
 
@@ -696,17 +697,18 @@ module Rodauth
       request.halt
     end
 
-    def route_path(route, opts={})
+    def route_path(route, opts=OPTS)
       path  = "#{prefix}/#{route}"
       path += "?#{Rack::Utils.build_nested_query(opts)}" unless opts.empty?
       path
     end
 
-    def route_url(route, opts={})
+    def route_url(route, opts=OPTS)
       "#{base_url}#{route_path(route, opts)}"
     end
 
-    def transaction(opts={}, &block)
+    def transaction(opts=OPTS, &block)
+      opts = opts.empty? ? transaction_opts : transaction_opts.merge(opts)
       db.transaction(opts, &block)
     end
 
@@ -964,6 +966,14 @@ module Rodauth
 
     def internal_request?
       false
+    end
+
+    # :nocov:
+    if RUBY_VERSION >= '4.0'
+    # :nocov:
+      def instance_variables_to_inspect
+        instance_variables.reject{|v| instance_variable_get(v).nil?}
+      end
     end
 
     def use_scope_clear_session?
