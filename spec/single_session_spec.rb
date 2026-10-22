@@ -74,11 +74,13 @@ describe 'Rodauth single session feature' do
       page.body.must_include "Logged In"
 
       visit '/clearsession'
-      page.body.must_include "Logged In"
+      page.body.must_include "Not Logged"
 
+      login
       visit '/cleardb'
-      page.body.must_include "Logged In"
+      page.body.must_include "Not Logged"
 
+      logout
       login
       page.body.must_include "Logged In"
 
@@ -132,9 +134,50 @@ describe 'Rodauth single session feature' do
     end
   end
 
+  it "should treat session as inactive if it has no session key but there is a current database session" do
+    rodauth do
+      enable :login, :single_session
+    end
+    roda do |r|
+      r.rodauth
+      rodauth.check_single_session
+      r.get("clear-ssk") {session.delete(rodauth.single_session_session_key)}
+      r.root{rodauth.logged_in? ? "Logged In!" : "Not Logged"}
+    end
+
+    login
+    visit '/clear-ssk'
+    visit '/'
+    page.body.must_equal "Not Logged"
+  end
+
+  it "should treat session as new active if it has no session key but there is not a current database session" do
+    ds = DB[:account_session_keys]
+    rodauth do
+      enable :login, :single_session
+    end
+    roda do |r|
+      r.rodauth
+      rodauth.check_single_session
+      r.get("clear-ssk") do
+        ds.delete
+        session.delete(rodauth.single_session_session_key)
+      end
+      r.root{rodauth.logged_in? ? "Logged In!" : "Not Logged"}
+    end
+
+    login
+    ds.count.must_equal 1
+    visit '/clear-ssk'
+    ds.count.must_equal 0
+    visit '/'
+    ds.count.must_equal 1
+    page.body.must_equal "Logged In!"
+  end
+
   it "should clear single session when resetting password without a logged in session" do
     rodauth do
-      enable :login, :reset_password, :single_session
+      enable :login, :reset_password, :single_session, :logout
       require_password_confirmation? false
       reset_password_autologin? false
     end
@@ -146,6 +189,7 @@ describe 'Rodauth single session feature' do
 
     login
 
+    logout
     visit '/login'
     login(:pass=>'01234567', :visit=>false)
     click_button 'Request Password Reset'

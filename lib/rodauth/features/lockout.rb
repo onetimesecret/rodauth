@@ -116,16 +116,19 @@ module Rodauth
       end
 
       r.post do
-        key = session[unlock_account_session_key] || param(unlock_account_key_param)
-        unless account_from_unlock_key(key)
-          set_redirect_error_status invalid_key_error_status
-          set_error_reason :invalid_unlock_account_key
-          set_redirect_error_flash no_matching_unlock_account_key_error_flash
-          redirect unlock_account_request_redirect
-        end
+        key = session_param(unlock_account_session_key, unlock_account_key_param)
+        select_key_for_update!
 
-        if !unlock_account_requires_password? || password_match?(param(password_param))
-          transaction do
+        transaction do
+          unless key && account_from_unlock_key(key)
+            remove_session_value(unlock_account_session_key)
+            set_redirect_error_status invalid_key_error_status
+            set_error_reason :invalid_unlock_account_key
+            set_redirect_error_flash no_matching_unlock_account_key_error_flash
+            redirect unlock_account_request_redirect
+          end
+
+          if !unlock_account_requires_password? || password_match?(param(password_param))
             before_unlock_account
             unlock_account
             clear_tokens(:unlock_account)
@@ -133,15 +136,15 @@ module Rodauth
             if unlock_account_autologin?
               autologin_session('unlock_account')
             end
-          end
 
-          remove_session_value(unlock_account_session_key)
-          unlock_account_response
-        else
-          set_response_error_reason_status(:invalid_password, invalid_password_error_status)
-          set_field_error(password_param, invalid_password_message)
-          set_error_flash unlock_account_error_flash
-          unlock_account_view
+            remove_session_value(unlock_account_session_key)
+            unlock_account_response
+          else
+            set_response_error_reason_status(:invalid_password, invalid_password_error_status)
+            set_field_error(password_param, invalid_password_message)
+            set_error_flash unlock_account_error_flash
+            unlock_account_view
+          end
         end
       end
     end
@@ -184,11 +187,11 @@ module Rodauth
           with_sql(:update_sql, account_login_failures_number_column=>Sequel.expr(account_login_failures_number_column)+1).
           single_value
       else
-        # :nocov:
+        # simplecov:disable
         if ds.update(account_login_failures_number_column=>Sequel.expr(account_login_failures_number_column)+1) > 0
           ds.get(account_login_failures_number_column)
         end
-        # :nocov:
+        # simplecov:enable
       end
 
       unless number
@@ -221,7 +224,7 @@ module Rodauth
     end
 
     def account_from_unlock_key(key)
-      @account = _account_from_unlock_key(key)
+      set_account(_account_from_unlock_key(key), :unlock)
     end
 
     def unlock_account_email_link
@@ -310,7 +313,7 @@ module Rodauth
     end
 
     def _account_from_unlock_key(token)
-      account_from_key(token){|id| account_lockouts_ds(id).get(account_lockouts_key_column)}
+      account_from_key(token){|id| apply_key_for_update(account_lockouts_ds(id)).get(account_lockouts_key_column)}
     end
   end
 end

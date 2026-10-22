@@ -1,5 +1,97 @@
 === master
 
+* Fix change_password when update_password_hash updates the password hash in the same request (fedegl, jeremyevans) (#520)
+
+* Avoid loading the account twice when generating login form footer links if the initial account load failed (janko) (#519)
+
+* Avoid loading the account twice in routes requiring an account when using two factor authentication and account_password_hash_column (osbre) (#518)
+
+* Use Roda::RodaPlugins.opt_attr_reader if available for slight performance improvement (jeremyevans)
+
+=== 2.48.0 (2026-09-24)
+
+* Add logged_in_fallback_to_http_basic_auth? configuration method to http_basic_auth feature (jeremyevans)
+
+* Make account_from_session return account loaded via http_basic_auth feature (jeremyevans)
+
+* Change password_grace_period to not unset last_password_entry_session_key if new password is the same as current (jeremyevans)
+
+=== 2.47.0 (2026-08-24) [SECURITY]
+
+* Only allow single use of login change token in concurrent requests in verify_login_change feature (jeremyevans)
+
+* Only allow single use of unlock token in concurrent requests in lockout feature (jeremyevans)
+
+* Only allow single use of recovery code in concurrent requests in recovery_codes feature (jeremyevans)
+
+* Only allow single use of email auth token in concurrent requests in email_auth feature (jeremyevans)
+
+* Disallow webauthn modification for passwordless accounts supporting two factor authentication when only webauthn authenticated (jeremyevans)
+
+* Serialize concurrent requests per account for sms and otp auth (jeremyevans)
+
+* Disallow use of token in parameter in non-JSON POST requests that deal with tokens (jeremyevans)
+
+* Only allow single use of verify account token in concurrent requests in verify_account feature (jeremyevans)
+
+* Only allow single use of refresh token in concurrent requests in jwt_refresh feature (jeremyevans)
+
+* Only allow single use of password reset token in concurrent requests in reset_password feature (jeremyevans)
+
+* Enforce verify_login_change deadlines (jeremyevans)
+
+* Consider password_pepper bytesize when checking password against password_maximum_bytes (jeremyevans)
+
+* Remove refresh token created using old hmac secret during logout in jwt_refresh feature (jeremyevans)
+
+* Add return_to_path_max_size and valid_return_to_path?(path) configuration methods for controlling return to path behavior for all features (jeremyevans)
+
+* Prevent returning to remote URLs by default (jeremyevans)
+
+* Disallow multifactor authentication when both factors are the same (jeremyevans)
+
+* Do not setup multi factor authentication when adding webauthn authenticator after webauthn login (jeremyevans)
+
+* Make otp feature prevent otp code reuse by using ROTP verify at argument (jeremyevans)
+
+* Make json feature anchor json_request_content_type_regexp with \A to prevent CSRF (jeremyevans)
+
+* Make jwt_refresh feature not allow decoding expired JWTs for non-POST requests (jeremyevans)
+
+* Make jwt feature remove Authorization response header from response if it request isn't POST or doesn't accept JSON (jeremyevans)
+
+* Prevent extending password grace period deadline by attempting to change password to current value (jeremyevans)
+
+* If checking password and then setting new password, check previous current hash/salt hasn't changed (jeremyevans)
+
+* Warn by default if using login feature without the already_logged_in configuration method (jeremyevans)
+
+* Warn by default if using a feature that uses the hmac_secret method without configuring it (jeremyevans)
+
+* Warn by default if using a feature that uses the domain method without configuring it (jeremyevans)
+
+* Add missing_recommended_configuration(msg) configuration method for handling cases where the configuration is missing a recommended method (jeremyevans)
+
+* Make verify_login_change feature disallow verification for unverified and closed accounts (jeremyevans)
+
+* Make jwt_cors feature set Vary header to Origin by default (jeremyevans)
+
+* Make single_session feature treat session as invalid if session key does not exist but session exists in database (jeremyevans)
+
+* Add account_reload(old_type, new_type) configuration method for handling account reloads (jeremyevans)
+
+* Add set_account private method for setting the account information (jeremyevans)
+
+* Add account_id_or_session_value private method, to consolidate lookups that use either account id or session value (jeremyevans)
+
+=== 2.46.0 (2026-08-19)
+
+* [SECURITY] Prevent account takeover in webauthn_login feature (jeremyevans)
+
+* Do not call convert_token_id with a nil value (jeremyevans)
+
+* Add close_account_email feature (jeremyevans)
+
 * Make clearing verify account token only delete token if closing account (jeremyevans)
 
 * Clear account tokens when using the change password feature (jeremyevans)

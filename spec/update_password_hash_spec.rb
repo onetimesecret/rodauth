@@ -1,17 +1,29 @@
 require_relative 'spec_helper'
 
-describe 'Rodauth update_password feature' do
+describe 'Rodauth update_password_hash feature' do
   [false, true].each do |ph|
-    it "should support updating passwords for accounts #{'with account_password_hash_column' if ph} if hash cost changes" do
-      cost = if RODAUTH_ALWAYS_ARGON2
-        if Argon2::VERSION >= '2.1'
-          {t_cost: 1, m_cost: 6, p_cost: 2}
-        else
-          {t_cost: 1, m_cost: 6}
-        end
+    orig_cost = if RODAUTH_ALWAYS_ARGON2
+      if Argon2::VERSION >= '2.1'
+        {t_cost: 1, m_cost: 6, p_cost: 2}
       else
-        BCrypt::Engine::MIN_COST
+        {t_cost: 1, m_cost: 6}
       end
+    else
+      BCrypt::Engine::MIN_COST
+    end
+
+    new_cost = if RODAUTH_ALWAYS_ARGON2
+      if Argon2::VERSION >= '2.1'
+        {t_cost: 1, m_cost: 5, p_cost: 2}
+      else
+        {t_cost: 1, m_cost: 5}
+      end
+    else
+      orig_cost + 1
+    end
+
+    it "should support updating password hashes for accounts #{'with account_password_hash_column' if ph} if hash cost changes" do
+      cost = orig_cost
       rodauth do
         enable :login, :logout, :update_password_hash
         account_password_hash_column :ph if ph
@@ -32,15 +44,7 @@ describe 'Rodauth update_password feature' do
       page.current_path.must_equal '/'
       content.must_equal page.html
 
-      if RODAUTH_ALWAYS_ARGON2
-        cost = if Argon2::VERSION >= '2.1'
-          {t_cost: 1, m_cost: 5, p_cost: 2}
-        else
-          {t_cost: 1, m_cost: 5}
-        end
-      else
-        cost += 1
-      end
+      cost = new_cost
 
       logout
       login
@@ -52,6 +56,71 @@ describe 'Rodauth update_password feature' do
       login
       page.current_path.must_equal '/'
       new_content.must_equal page.html
+    end
+
+    it "should allow changing the password when checking the current password updates its hash#{' with account_password_hash_column' if ph}" do
+      cost = orig_cost
+      rodauth do
+        enable :login, :logout, :change_password, :update_password_hash
+        account_password_hash_column :ph if ph
+        password_hash_cost{cost}
+      end
+      roda do |r|
+        r.rodauth
+        r.root{view :content=>""}
+      end
+
+      login
+      page.current_path.must_equal '/'
+
+      cost = new_cost
+
+      visit '/change-password'
+      fill_in 'Password', :with=>'0123456789'
+      fill_in 'New Password', :with=>'0123456'
+      fill_in 'Confirm Password', :with=>'0123456'
+      click_button 'Change Password'
+      page.find('#notice_flash').text.must_equal "Your password has been changed"
+
+      logout
+      login(:pass=>'0123456')
+      page.current_path.must_equal '/'
+    end
+
+    unless ENV['RODAUTH_NO_ARGON2'] == '1'
+      begin
+        require 'argon2'
+      rescue LoadError
+      else
+        it "should allow changing the password when checking the current password adds an argon2_secret#{' with account_password_hash_column' if ph}" do
+          secret = nil
+          rodauth do
+            enable :login, :logout, :change_password, :update_password_hash, :argon2
+            account_password_hash_column :ph if ph
+            argon2_secret{secret}
+          end
+          roda do |r|
+            r.rodauth
+            r.root{view :content=>""}
+          end
+
+          login
+          page.current_path.must_equal '/'
+
+          secret = '1'
+
+          visit '/change-password'
+          fill_in 'Password', :with=>'0123456789'
+          fill_in 'New Password', :with=>'0123456'
+          fill_in 'Confirm Password', :with=>'0123456'
+          click_button 'Change Password'
+          page.find('#notice_flash').text.must_equal "Your password has been changed"
+
+          logout
+          login(:pass=>'0123456')
+          page.current_path.must_equal '/'
+        end
+      end
     end
   end
 
@@ -73,8 +142,32 @@ describe 'Rodauth update_password feature' do
     click_button 'Change Password'
     page.find('#notice_flash').text.must_equal "Your password has been changed"
 
+    logout
     login
     page.html.must_include 'Logged In'
+  end
+
+  it "should disallow login for concurrent password changes" do
+    rodauth do
+      enable :login, :update_password_hash
+      set_password do |v|
+        @existing_password_hash_or_salt = '1'
+        super(v)
+      end
+      auth_class_eval do
+        private
+        def update_password_hash?
+          true
+        end
+      end
+    end
+    roda do |r|
+      r.rodauth
+      r.root{view(:content=>rodauth.logged_in? ? 'Logged In' : 'Not Logged')}
+    end
+
+    login
+    page.find('#error_flash').text.must_equal "There was an error logging in"
   end
 end
 
@@ -83,9 +176,9 @@ begin
   require 'argon2'
 rescue LoadError
 else
-describe 'Rodauth update_password feature' do
+describe 'Rodauth update_password_hash feature' do
   [false, true].each do |ph|
-    it "should support updating passwords for accounts #{'with account_password_hash_column' if ph} if hash algorithm changes from bcrypt to argon2" do
+    it "should support updating password hashes for accounts #{'with account_password_hash_column' if ph} if hash algorithm changes from bcrypt to argon2" do
       rodauth do
         enable :login, :logout, :update_password_hash, :argon2
         account_password_hash_column :ph if ph
@@ -106,7 +199,7 @@ describe 'Rodauth update_password feature' do
       content.must_equal page.html
     end
 
-    it "should support updating passwords for accounts #{'with account_password_hash_column' if ph} if argon2_secret changes" do
+    it "should support updating password hashes for accounts #{'with account_password_hash_column' if ph} if argon2_secret changes" do
       secret = old_secret = nil
       rodauth do
         enable :login, :logout, :update_password_hash, :argon2
@@ -154,7 +247,7 @@ describe 'Rodauth update_password feature' do
   end
 end
 
-describe 'Rodauth update_password feature' do
+describe 'Rodauth update_password_hash feature' do
   around(:all) do |&block|
     DB.transaction(:rollback=>:always) do
       hasher = ::Argon2::Password.new({ t_cost: 1, m_cost: 5, p_cost: 2 })
@@ -165,7 +258,7 @@ describe 'Rodauth update_password feature' do
   end
 
   [false, true].each do |ph|
-    it "should support updating passwords for accounts #{'with account_password_hash_column' if ph} if hash cost changes via argon2" do
+    it "should support updating password hashes for accounts #{'with account_password_hash_column' if ph} if hash cost changes via argon2" do
       cost = { t_cost: 1, m_cost: 5, p_cost: 2 }
       rodauth do
         enable :login, :logout, :update_password_hash, :argon2
@@ -200,7 +293,7 @@ describe 'Rodauth update_password feature' do
       new_content.must_equal page.html
     end if Argon2::VERSION >= '2.1'
 
-    it "should support updating passwords for accounts #{'with account_password_hash_column' if ph} if hash algorithm changes from argon2 to bcrypt" do
+    it "should support updating password hashes for accounts #{'with account_password_hash_column' if ph} if hash algorithm changes from argon2 to bcrypt" do
       rodauth do
         enable :login, :logout, :update_password_hash, :argon2
         account_password_hash_column :ph if ph

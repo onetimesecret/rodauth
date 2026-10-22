@@ -74,15 +74,18 @@ module Rodauth
       end
 
       r.post do
-        key = session[verify_login_change_session_key] || param(verify_login_change_key_param)
-        unless account_from_verify_login_change_key(key)
-          set_redirect_error_status(invalid_key_error_status)
-          set_error_reason :invalid_verify_login_change_key
-          set_redirect_error_flash verify_login_change_error_flash
-          redirect verify_login_change_redirect
-        end
+        key = session_param(verify_login_change_session_key, verify_login_change_key_param)
+        remove_session_value(verify_login_change_session_key)
+        select_key_for_update!
 
         transaction do
+          unless key && account_from_verify_login_change_key(key)
+            set_redirect_error_status(invalid_key_error_status)
+            set_error_reason :invalid_verify_login_change_key
+            set_redirect_error_flash verify_login_change_error_flash
+            redirect verify_login_change_redirect
+          end
+
           before_verify_login_change
           unless verify_login_change
             set_redirect_error_status(invalid_key_error_status)
@@ -98,7 +101,6 @@ module Rodauth
           autologin_session('verify_login_change')
         end
 
-        remove_session_value(verify_login_change_session_key)
         verify_login_change_response
       end
     end
@@ -120,7 +122,7 @@ module Rodauth
     end
 
     def account_from_verify_login_change_key(key)
-      @account = _account_from_verify_login_change_key(key)
+      set_account(_account_from_verify_login_change_key(key), :verify_login_change)
     end
 
     def send_verify_login_change_email(login)
@@ -132,7 +134,9 @@ module Rodauth
     end
 
     def get_verify_login_change_login_and_key(id)
-      verify_login_change_ds(id).get([verify_login_change_login_column, verify_login_change_key_column])
+      ds = verify_login_change_ds(id)
+      ds.where(Sequel::CURRENT_TIMESTAMP > verify_login_change_deadline_column).delete
+      apply_key_for_update(ds).get([verify_login_change_login_column, verify_login_change_key_column])
     end
 
     def change_login_notice_flash
@@ -210,10 +214,14 @@ module Rodauth
     end
 
     def _account_from_verify_login_change_key(token)
-      account_from_key(token) do |id|
+      account_from_key(token, verify_login_change_account_status_value) do |id|
         @verify_login_change_new_login, key = get_verify_login_change_login_and_key(id)
         key
       end
+    end
+
+    def verify_login_change_account_status_value
+      account_open_status_value
     end
   end
 end

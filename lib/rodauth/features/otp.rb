@@ -5,7 +5,7 @@ require 'rqrcode'
 
 module Rodauth
   Feature.define(:otp, :Otp) do
-    depends :two_factor_base
+    depends :two_factor_base, :require_domain, :require_hmac_secret
 
     additional_form_tags 'otp_disable'
     additional_form_tags 'otp_auth'
@@ -127,13 +127,18 @@ module Rodauth
       end
 
       r.post do
-        if otp_valid_code?(param(otp_auth_param)) && otp_update_last_use
-          before_otp_authentication
-          two_factor_authenticate('totp')
+        transaction do
+          otp_key_ds.for_update.first
+
+          if otp_valid_code?(param(otp_auth_param)) && otp_update_last_use
+            before_otp_authentication
+            two_factor_authenticate('totp')
+          end
+
+          otp_record_authentication_failure
+          after_otp_authentication_failure
         end
 
-        otp_record_authentication_failure
-        after_otp_authentication_failure
         set_response_error_reason_status(:invalid_otp_auth_code, invalid_key_error_status)
         set_field_error(otp_auth_param, otp_invalid_auth_code_message)
         set_error_flash otp_auth_error_flash
@@ -265,15 +270,19 @@ module Rodauth
       return false unless otp_exists?
       ot_pass = ot_pass.gsub(/\s+/, '')
       if drift = otp_drift
+        # simplecov:disable
         if otp.respond_to?(:verify_with_drift)
-          # :nocov:
           otp.verify_with_drift(ot_pass, drift)
-          # :nocov:
+        # simplecov:enable
         else
-          otp.verify(ot_pass, :drift_behind=>drift, :drift_ahead=>drift)
+          otp.verify(ot_pass, :drift_behind=>drift, :drift_ahead=>drift, :after=>otp_last_use)
         end
-      else
+      # simplecov:disable
+      elsif otp.respond_to?(:verify_with_drift)
         otp.verify(ot_pass)
+      # simplecov:enable
+      else
+        otp.verify(ot_pass, :after=>otp_last_use)
       end
     end
 
@@ -404,11 +413,11 @@ module Rodauth
         ROTP::Base32.random_base32.downcase
       end
     else
-      # :nocov:
+      # simplecov:disable
       def otp_new_secret
         ROTP::Base32.random.downcase
       end
-      # :nocov:
+      # simplecov:enable
     end
 
     def base32_encode(data, length)

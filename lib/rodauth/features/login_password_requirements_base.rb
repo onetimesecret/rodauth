@@ -12,7 +12,7 @@ module Rodauth
     translatable_method :logins_do_not_match_message, 'logins do not match'
     auth_value_method :password_confirm_param, 'password-confirm'
     auth_value_method :password_minimum_length, 6
-    auth_value_method :password_maximum_bytes, nil
+    auth_value_method :password_maximum_bytes, nil # RODAUTH3: 72 if bcrypt is used
     auth_value_method :password_maximum_length, nil
     translatable_method :passwords_do_not_match_message, 'passwords do not match'
     auth_value_method :require_email_address_logins?, true
@@ -67,13 +67,39 @@ module Rodauth
     def set_password(password)
       hash = password_hash(password)
       if account_password_hash_column
-        update_account(account_password_hash_column=>hash)
-      elsif password_hash_ds.update(password_hash_column=>hash) == 0
-        # This shouldn't raise a uniqueness error, as the update should only fail for a new user,
-        # and an existing user should always have a valid password hash row.  If this does
-        # fail, retrying it will cause problems, it will override a concurrently running update
-        # with potentially a different password.
-        db[password_hash_table].insert(password_hash_id_column=>account_id, password_hash_column=>hash)
+        ds = account_ds
+
+        if @existing_password_hash_or_salt
+          ds = ds.where(account_password_hash_column => @existing_password_hash_or_salt)
+        end
+
+        unless update_account({account_password_hash_column=>hash}, ds) == 1
+          raise SetPasswordFailure, "set_password did not update password, either due to missing account, or concurrent password change"
+        end
+      else
+        ph_ds = ds = password_hash_ds
+        if @existing_password_hash_or_salt
+          existing_expression = if use_database_authentication_functions?
+            Sequel.function(function_name(:rodauth_get_salt), :id)
+          # simplecov:disable
+          else
+            password_hash_column
+          # simplecov:enable
+          end
+          ds = ds.where(existing_expression => @existing_password_hash_or_salt)
+        end
+
+        if ds.update(password_hash_column=>hash) == 0
+          if ph_ds.empty?
+            # This shouldn't raise a uniqueness error, as the update should only fail for a new user,
+            # and an existing user should always have a valid password hash row.  If this does
+            # fail, retrying it will cause problems, it will override a concurrently running update
+            # with potentially a different password.
+            db[password_hash_table].insert(password_hash_id_column=>account_id, password_hash_column=>hash)
+          else
+            raise SetPasswordFailure, "set_password did not update password due to concurrent password change"
+          end
+        end
       end
       hash
     end
@@ -133,12 +159,12 @@ module Rodauth
       def login_confirmation_matches?(login, login_confirmation)
         login.casecmp?(login_confirmation)
       end
-    # :nocov:
+    # simplecov:disable
     else
       def login_confirmation_matches?(login, login_confirmation)
         login.casecmp(login_confirmation) == 0
       end
-    # :nocov:
+    # simplecov:enable
     end
 
     def login_meets_length_requirements?(login)
@@ -174,12 +200,16 @@ module Rodauth
       elsif password_maximum_length && password_maximum_length < password.length
         set_password_requirement_error_message(:password_too_long, password_too_long_message)
         false
-      elsif password_maximum_bytes && password_maximum_bytes < password.bytesize
+      elsif password_maximum_bytes && password_maximum_bytes < password_bytesize(password)
         set_password_requirement_error_message(:password_too_many_bytes, password_too_many_bytes_message)
         false
       else
         true
       end
+    end
+
+    def password_bytesize(password)
+      password.bytesize
     end
 
     def password_does_not_contain_null_byte?(password)
@@ -193,11 +223,11 @@ module Rodauth
         BCrypt::Engine::MIN_COST
       end
     else
-      # :nocov:
+      # simplecov:disable
       def password_hash_cost
         BCrypt::Engine::DEFAULT_COST
       end
-      # :nocov:
+      # simplecov:enable
     end
 
     def extract_password_hash_cost(hash)

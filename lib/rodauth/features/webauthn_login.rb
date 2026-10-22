@@ -76,7 +76,7 @@ module Rodauth
     end
 
     def account_from_webauthn_login
-      account_from_login(login_param_value)
+      @account_retrieval_type == :login ? @account : account_from_login(login_param_value)
     end
 
     def webauthn_login_options?
@@ -90,10 +90,6 @@ module Rodauth
         forms << [20, render('webauthn-auth'), nil]
       end
       forms
-    end
-
-    def webauthn_account_id
-      super || account_id
     end
   end
 end

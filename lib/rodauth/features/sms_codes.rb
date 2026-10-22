@@ -2,7 +2,7 @@
 
 module Rodauth
   Feature.define(:sms_codes, :SmsCodes) do
-    depends :two_factor_base
+    depends :two_factor_base, :require_domain
 
     additional_form_tags 'sms_auth'
     additional_form_tags 'sms_confirm'
@@ -176,6 +176,9 @@ module Rodauth
 
       r.post do
         transaction do
+          @sms = sms_ds.for_update.first
+          require_sms_available
+
           if sms_code_match?(param(sms_code_param))
             before_sms_auth
             sms_remove_failures

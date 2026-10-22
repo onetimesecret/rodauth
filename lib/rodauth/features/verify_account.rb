@@ -114,30 +114,30 @@ module Rodauth
       end
 
       r.post do
-        key = session[verify_account_session_key] || param(verify_account_key_param)
-        unless account_from_verify_account_key(key)
-          set_redirect_error_status(invalid_key_error_status)
-          set_error_reason :invalid_verify_account_key
-          set_redirect_error_flash verify_account_error_flash
-          redirect verify_account_redirect
-        end
+        key = session_param(verify_account_session_key, verify_account_key_param)
+        select_key_for_update!
 
         catch_error do
-          if verify_account_set_password?
-            password = param(password_param)
-
-            if require_password_confirmation? && password != param(password_confirm_param)
-              throw_error_reason(:passwords_do_not_match, unmatched_field_error_status, password_param, passwords_do_not_match_message)
-            end
-
-            unless password_meets_requirements?(password)
-              throw_error_status(invalid_field_error_status, password_param, password_does_not_meet_requirements_message)
-            end
-          end
-
           transaction do
+            handle_invalid_verify_account_key unless key && account_from_verify_account_key(key)
+
+            if verify_account_set_password?
+              password = param(password_param)
+
+              if require_password_confirmation? && password != param(password_confirm_param)
+                throw_error_reason(:passwords_do_not_match, unmatched_field_error_status, password_param, passwords_do_not_match_message)
+              end
+
+              unless password_meets_requirements?(password)
+                throw_error_status(invalid_field_error_status, password_param, password_does_not_meet_requirements_message)
+              end
+            end
+
             before_verify_account
-            verify_account
+            unless verify_account
+              remove_verify_account_key
+              handle_invalid_verify_account_key
+            end
             if verify_account_set_password?
               set_password(password)
             end
@@ -171,7 +171,8 @@ module Rodauth
     end
 
     def verify_account
-      update_account(account_status_column=>account_open_status_value) == 1
+      ds = account_ds.where(account_status_column=>account_unverified_status_value)
+      update_account({account_status_column=>account_open_status_value}, ds) == 1
     end
 
     def verify_account_email_resend
@@ -196,7 +197,7 @@ module Rodauth
     end
 
     def account_from_verify_account_key(key)
-      @account = _account_from_verify_account_key(key)
+      set_account(_account_from_verify_account_key(key), :verify_account)
     end
 
     def account_initial_status_value
@@ -208,7 +209,7 @@ module Rodauth
     end
 
     def get_verify_account_key(id)
-      verify_account_ds(id).get(verify_account_key_column)
+      apply_key_for_update(verify_account_ds(id)).get(verify_account_key_column)
     end
 
     def skip_status_checks?
@@ -264,7 +265,7 @@ module Rodauth
 
     def _login_form_footer_links
       links = super
-      if !param_or_nil(login_param) || ((account || account_from_login(login_param_value)) && allow_resending_verify_account_email?)
+      if !param_or_nil(login_param) || ((account || (@account_retrieval_type != :login && account_from_login(login_param_value))) && allow_resending_verify_account_email?)
         links << [30, verify_account_resend_path, verify_account_resend_link_text]
       end
       links
@@ -317,6 +318,14 @@ module Rodauth
 
     def _account_from_verify_account_key(token)
       account_from_key(token, account_unverified_status_value){|id| get_verify_account_key(id)}
+    end
+
+    def handle_invalid_verify_account_key
+      remove_session_value(verify_account_session_key)
+      set_redirect_error_status(invalid_key_error_status)
+      set_error_reason :invalid_verify_account_key
+      set_redirect_error_flash verify_account_error_flash
+      redirect verify_account_redirect
     end
   end
 end

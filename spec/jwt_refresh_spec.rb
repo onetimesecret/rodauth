@@ -104,7 +104,7 @@ describe 'Rodauth login feature' do
 
   it "should clear refresh tokens when resetting password without a logged in session" do
     rodauth do
-      enable :login, :reset_password, :jwt_refresh
+      enable :login, :reset_password, :jwt_refresh, :logout
       require_password_confirmation? false
       reset_password_autologin? false
     end
@@ -116,6 +116,7 @@ describe 'Rodauth login feature' do
     jwt_refresh_login
     login
 
+    logout
     visit '/login'
     login(:pass=>'01234567', :visit=>false)
     click_button 'Request Password Reset'
@@ -172,7 +173,7 @@ describe 'Rodauth login feature' do
 
   it "should require Accept contain application/json if json_check_accept? is true and Accept is present" do
     rodauth do
-      enable :login, :jwt_refresh
+      enable :login, :jwt_refresh, :logout
       jwt_secret '1'
       json_response_success_key 'success'
       json_check_accept? true
@@ -185,8 +186,11 @@ describe 'Rodauth login feature' do
     res.must_equal [406, {'error'=>'Unsupported Accept header. Must accept "application/json" or compatible content type'}]
 
     jwt_refresh_validate_login(json_request("/login", :login=>'foo@example.com', :password=>'0123456789'))
+    json_request("/logout")
     jwt_refresh_validate_login(json_request("/login", :headers=>{'HTTP_ACCEPT'=>'*/*'}, :login=>'foo@example.com', :password=>'0123456789'))
+    json_request("/logout")
     jwt_refresh_validate_login(json_request("/login", :headers=>{'HTTP_ACCEPT'=>'application/*'}, :login=>'foo@example.com', :password=>'0123456789'))
+    json_request("/logout")
     jwt_refresh_validate_login(json_request("/login", :headers=>{'HTTP_ACCEPT'=>'application/vnd.api+json'}, :login=>'foo@example.com', :password=>'0123456789'))
   end
 
@@ -262,6 +266,7 @@ describe 'Rodauth login feature' do
         jwt_secret '1'
         skip_status_checks? hs
         after_refresh_token{rt = json_response['refresh_token']}
+        already_logged_in{} if hs
       end
       roda(:jwt) do |r|
         r.rodauth
@@ -314,9 +319,17 @@ describe 'Rodauth login feature' do
         res.must_equal [400, {"error"=>"invalid JWT refresh token"}]
         res = json_request("/jwt-refresh", :refresh_token=>"-9223372036854775807#{token_parts[0]}_#{token_parts[1]}")
         res.must_equal [400, {"error"=>"invalid JWT refresh token"}]
+        res = json_request("/jwt-refresh", :refresh_token=>"v#{token_parts[0]}_#{token_parts[1]}_")
+        res.must_equal [400, {"error"=>"invalid JWT refresh token"}]
         res = json_request("/jwt-refresh", :refresh_token=>"v#{token_parts[0]}_#{token_parts[1]}")
         res.must_equal [400, {"error"=>"invalid JWT refresh token"}]
         res = json_request("/jwt-refresh", :refresh_token=>"#{token_parts[0]}_v#{token_parts[1]}")
+        res.must_equal [400, {"error"=>"invalid JWT refresh token"}]
+        res = json_request("/jwt-refresh", :refresh_token=>"#{token_parts[0]}_")
+        res.must_equal [400, {"error"=>"invalid JWT refresh token"}]
+        res = json_request("/jwt-refresh", :refresh_token=>"#{token_parts[0]}")
+        res.must_equal [400, {"error"=>"invalid JWT refresh token"}]
+        res = json_request("/jwt-refresh", :refresh_token=>"")
         res.must_equal [400, {"error"=>"invalid JWT refresh token"}]
       end
 
@@ -382,6 +395,17 @@ describe 'Rodauth login feature' do
         res = json_request("/jwt-refresh", :refresh_token=>eighth_refresh_token)
         res.first.must_equal 400
         res.must_equal [400, {'error'=>'invalid JWT refresh token'}]
+
+        # Logout with old_secret removes refresh token
+        secret = SecureRandom.random_bytes(32)
+        old_secret = nil
+        res = jwt_refresh_login
+        refresh_token = res.last['refresh_token']
+        old_secret = secret
+        secret = SecureRandom.random_bytes(32)
+        json_request("/logout", :refresh_token=>refresh_token).first.must_equal 200
+        @authorization = res.last['access_token']
+        json_request("/jwt-refresh", :refresh_token=>refresh_token).first.must_equal 400
       end
     end
   end
@@ -436,7 +460,7 @@ describe 'Rodauth login feature' do
 
   it "should not return access_token for failed login attempt" do
     rodauth do
-      enable :login, :create_account, :jwt_refresh
+      enable :login, :create_account, :jwt_refresh, :logout
       after_create_account{json_response[:account_id] = account_id}
       create_account_autologin? true
     end
@@ -449,6 +473,7 @@ describe 'Rodauth login feature' do
 
     json_request('/create-account', :login=>'foo@example2.com', "login-confirm"=>'foo@example2.com', :password=>'0123456789', "password-confirm"=>'0123456789')
 
+    json_request("/logout")
     res = json_request('/login', :login=>'foo@example2.com', :password=>'123123')
     res.must_equal [401, {'reason'=>"invalid_password","field-error"=>['password', 'invalid password'], "error"=>"There was an error logging in"}]
   end

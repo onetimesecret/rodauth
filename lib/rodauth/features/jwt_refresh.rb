@@ -2,7 +2,7 @@
 
 module Rodauth
   Feature.define(:jwt_refresh, :JwtRefresh) do
-    depends :jwt
+    depends :jwt, :require_hmac_secret
 
     after 'refresh_token'
     before 'refresh_token'
@@ -31,28 +31,34 @@ module Rodauth
       :account_from_refresh_token
     )
 
-    uses_instance_variables(:@jwt_refresh_route)
+    uses_instance_variables(
+      :@jwt_refresh_route,
+      :@jwt_refresh_key_for_update,
+    )
 
     route do |r|
-      @jwt_refresh_route = true
       before_jwt_refresh_route
 
       r.post do
+        @jwt_refresh_route = true
         if !session_value
           response.status ||= jwt_refresh_without_access_token_status
           json_response[json_response_error_key] = jwt_refresh_without_access_token_message
-        elsif (refresh_token = param_or_nil(jwt_refresh_token_key_param)) && account_from_refresh_token(refresh_token)
-          transaction do
-            before_refresh_token
-            formatted_token = generate_refresh_token
-            remove_jwt_refresh_token_key(refresh_token)
-            set_jwt_refresh_token_hmac_session_key(formatted_token)
-            json_response[jwt_refresh_token_key] = formatted_token
-            json_response[jwt_access_token_key] = session_jwt
-            after_refresh_token
-          end
         else
-          json_response[json_response_error_key] = jwt_refresh_invalid_token_message
+          @jwt_refresh_key_for_update = true
+          transaction do
+            if (refresh_token = param_or_nil(jwt_refresh_token_key_param)) && account_from_refresh_token(refresh_token)
+              before_refresh_token
+              formatted_token = generate_refresh_token
+              remove_jwt_refresh_token_key(refresh_token)
+              set_jwt_refresh_token_hmac_session_key(formatted_token)
+              json_response[jwt_refresh_token_key] = formatted_token
+              json_response[jwt_access_token_key] = session_jwt
+              after_refresh_token
+            else
+              json_response[json_response_error_key] = jwt_refresh_invalid_token_message
+            end
+          end
         end
         _return_json_response
       end
@@ -88,7 +94,7 @@ module Rodauth
     end
 
     def account_from_refresh_token(token)
-      @account = _account_from_refresh_token(token)
+      set_account(_account_from_refresh_token(token), :jwt_refresh)
     end
 
     def clear_tokens(reason)
@@ -133,18 +139,16 @@ module Rodauth
 
     def _account_refresh_token_split(token)
       id, token = split_token(token)
-      id = convert_token_id(id)
-      return unless id && token
+      return unless token && (id = convert_token_id(id))
 
       token_id, key = split_token(token)
-      token_id = convert_token_id(token_id)
-      return unless token_id && key
+      return unless key && (token_id = convert_token_id(token_id))
 
       [id, token_id, key]
     end
 
     def _jwt_decode_opts
-      if allow_refresh_with_expired_jwt_access_token? && (@jwt_refresh_route || request.path == jwt_refresh_path)
+      if allow_refresh_with_expired_jwt_access_token? && (@jwt_refresh_route || (request.path == jwt_refresh_path && request.request_method == "POST"))
         Hash[super].merge!(:verify_expiration=>false)
       else
         super
@@ -167,8 +171,12 @@ module Rodauth
         where(Sequel::CURRENT_TIMESTAMP > jwt_refresh_token_deadline_column).
         delete
 
-      jwt_refresh_token_account_token_ds(account_id, token_id).
-        get(jwt_refresh_token_key_column)
+      ds = jwt_refresh_token_account_token_ds(account_id, token_id)
+      if @jwt_refresh_key_for_update
+        ds = ds.for_update
+        @jwt_refresh_key_for_update = nil
+      end
+      ds.get(jwt_refresh_token_key_column)
     end
 
     def jwt_refresh_token_account_ds(account_id)
@@ -216,7 +224,12 @@ module Rodauth
         else
           id, token_id, key = _account_refresh_token_split(token)
 
-          if id && token_id && key && (actual = get_active_refresh_token(session_value, token_id)) && timing_safe_eql?(key, convert_token_key(actual))
+          if id &&
+              token_id &&
+              key &&
+              (actual = get_active_refresh_token(session_value, token_id)) &&
+              (timing_safe_eql?(key, convert_token_key(actual)) || 
+                 (hmac_secret_rotation? && timing_safe_eql?(key, compute_old_hmac(actual))))
             jwt_refresh_token_account_token_ds(id, token_id).delete
           end
         end

@@ -9,7 +9,13 @@ module Rodauth
     def password_match?(password)
       if (result = super) && update_password_hash?
         @update_password_hash = false
-        set_password(password)
+        begin
+          set_password(password)
+        rescue Rodauth::SetPasswordFailure
+          return false
+        else
+          @existing_password_hash_or_salt = nil
+        end
       end
 
       result

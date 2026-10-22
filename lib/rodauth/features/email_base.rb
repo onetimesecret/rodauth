@@ -2,6 +2,8 @@
 
 module Rodauth
   Feature.define(:email_base, :EmailBase) do
+    depends :require_domain, :require_hmac_secret
+
     translatable_method :email_subject_prefix, ''
     auth_value_method :require_mail?, true
     auth_value_method :allow_raw_email_token?, false
@@ -9,13 +11,18 @@ module Rodauth
     redirect :default_post_email
 
     auth_value_methods(
-      :email_from
+      :email_from,
+      :allow_param_fallback_for_session_param?
     )
 
     auth_methods(
       :create_email,
       :email_to,
       :send_email
+    )
+
+    uses_instance_variables(
+      :@key_for_update
     )
 
     def post_configure
@@ -58,14 +65,41 @@ module Rodauth
       "#{account_id}#{token_separator}#{convert_email_token_key(key)}"
     end
 
+    def session_param(session_key, param_name)
+      unless value = session[session_key]
+        if allow_param_fallback_for_session_param?
+          value = param(param_name)
+        end
+      end
+
+      value
+    end
+
+    def allow_param_fallback_for_session_param?
+      return super if defined?(super)
+      false
+    end
+
     def convert_email_token_key(key)
       convert_token_key(key)
     end
 
+    def select_key_for_update!
+      @key_for_update = true
+    end
+
+    def apply_key_for_update(ds)
+      if @key_for_update
+        @key_for_update = nil
+        ds.for_update
+      else
+        ds
+      end
+    end
+
     def account_from_key(token, status_id=nil)
       id, key = split_token(token)
-      id = convert_token_id(id)
-      return unless id && key
+      return unless key && (id = convert_token_id(id))
 
       return unless actual = yield(id)
 

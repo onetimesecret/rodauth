@@ -158,7 +158,7 @@ module Rodauth
     def require_two_factor_authenticated
       unless two_factor_authenticated?
         if two_factor_auth_return_to_requested_location?
-          set_session_value(two_factor_auth_redirect_session_key, request.fullpath)
+          set_session_return_to_path(two_factor_auth_redirect_session_key)
         end
         set_redirect_error_status(two_factor_need_authentication_error_status)
         set_error_reason :two_factor_need_authentication
@@ -262,6 +262,7 @@ module Rodauth
     end
 
     def two_factor_update_session(auth_type)
+      raise Error, "attempt to have two factor authentication using same factor" if authenticated_by.include?(auth_type)
       authenticated_by << auth_type
       set_session_value(two_factor_setup_session_key, true)
     end

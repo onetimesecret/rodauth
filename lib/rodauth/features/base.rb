@@ -2,7 +2,7 @@
 
 begin
   require "rack/version"
-# :nocov:
+# simplecov:disable
 rescue LoadError
   require "rack"
 else
@@ -13,7 +13,7 @@ else
     require "rack"
   end
 end
-# :nocov:
+# simplecov:enable
 
 module Rodauth
   Feature.define(:base, :Base) do
@@ -68,6 +68,7 @@ module Rodauth
     auth_value_method :prefix, ''
     auth_value_method :session_key_prefix, nil
     auth_value_method :require_bcrypt?, true
+    auth_value_method :return_to_path_max_size, 2048
     auth_value_method :mark_input_fields_as_required?, true
     auth_value_method :mark_input_fields_with_autocomplete?, true
     auth_value_method :mark_input_fields_with_inputmode?, true
@@ -101,6 +102,7 @@ module Rodauth
 
     auth_methods(
       :account_id,
+      :account_reload,
       :account_session_value,
       :already_logged_in,
       :authenticated?,
@@ -115,6 +117,7 @@ module Rodauth
       :inputmode_for_field?,
       :logged_in?,
       :login_required,
+      :missing_recommended_configuration,
       :normalize_login,
       :null_byte_parameter_value,
       :open_account?,
@@ -130,7 +133,8 @@ module Rodauth
       :set_error_reason,
       :set_title,
       :translate,
-      :update_session
+      :update_session,
+      :valid_return_to_path?
     )
 
     auth_private_methods(
@@ -164,7 +168,9 @@ module Rodauth
       :@current_route,
       :@field_errors,
       :@password_field_autocomplete_value,
-      :@has_password
+      :@has_password,
+      :@account_retrieval_type,
+      :@existing_password_hash_or_salt
     )
 
     attr_reader :scope
@@ -309,7 +315,7 @@ module Rodauth
     alias logged_in? session_value
 
     def account_from_login(login)
-      @account = _account_from_login(login)
+      set_account(_account_from_login(login), :login)
     end
 
     def open_account?
@@ -337,10 +343,12 @@ module Rodauth
     end
 
     def check_already_logged_in
+      # RODAUTH3: Move to login feature
       already_logged_in if logged_in?
     end
 
     def already_logged_in
+      # RODAUTH3: Move to login feature, halt or redirect by default
       nil
     end
 
@@ -414,15 +422,15 @@ module Rodauth
     end
 
     def account!
-      account || (session_value && account_from_session)
+      @account_retrieval_type ? @account : (session_value && account_from_session)
     end
 
     def account_from_session
-      @account = _account_from_session
+      set_account(_account_from_session, :session)
     end
 
     def account_from_id(id, status_id=nil)
-      @account = _account_from_id(id, status_id)
+      set_account(_account_from_id(id, status_id), :id)
     end
 
     def check_csrf
@@ -435,9 +443,9 @@ module Rodauth
       if use_request_specific_csrf_tokens?
         scope.csrf_tag(path)
       else
-        # :nocov:
+        # simplecov:disable
         scope.csrf_tag
-        # :nocov:
+        # simplecov:enable
       end
     end
 
@@ -464,7 +472,7 @@ module Rodauth
     end
 
     def only_json?
-      scope.class.opts[:rodauth_json] == :only
+      scope.class.rodauth_json == :only
     end
 
     def post_configure
@@ -486,7 +494,7 @@ module Rodauth
     end
 
     def password_match?(password)
-      if hash = get_password_hash
+      if @existing_password_hash_or_salt = hash = get_password_hash
         if account_password_hash_column || !use_database_authentication_functions?
           password_hash_match?(hash, password)
         else
@@ -579,7 +587,7 @@ module Rodauth
 
     def has_password?
       return @has_password unless @has_password.nil?
-      return false unless account || session_value
+      return false unless account_id_or_session_value
       @has_password = !!get_password_hash
     end
 
@@ -599,6 +607,14 @@ module Rodauth
       s
     end
 
+    def account_id_or_session_value
+      if @account
+        account_id
+      elsif !@account_retrieval_type
+        session_value
+      end
+    end
+
     if Rack.release >= '3'
       def set_response_header(key, value)
         response.headers[key] = value
@@ -607,7 +623,7 @@ module Rodauth
       def convert_response_header_key(key)
         key
       end
-    # :nocov:
+    # simplecov:disable
     else
       def set_response_header(key, value)
         response.headers[convert_response_header_key(key)] = value
@@ -627,19 +643,20 @@ module Rodauth
         Content-Type
         Content-Length
         WWW-Authenticate
+        Vary
       END
       mixed_case_headers.freeze
       define_method(:convert_response_header_key) do |key|
         mixed_case_headers.fetch(key, key)
       end
     end
-    # :nocov:
+    # simplecov:enable
 
     if RUBY_VERSION >= '2.1'
       def button_fixed_locals
         '(value:, opts:)'
       end
-    # :nocov:
+    # simplecov:disable
     else
       # Work on Ruby 2.0 when using Tilt 2.6+, as Ruby 2.0 does
       # not support required keyword arguments.
@@ -647,7 +664,28 @@ module Rodauth
         '(value: nil, opts: nil)'
       end
     end
-    # :nocov:
+    # simplecov:enable
+
+    def missing_recommended_configuration(msg)
+      # RODAUTH3: switch to raise ConfigurationError
+      warn msg
+    end
+
+    def account_reload(current_retrieval_type, new_retrieval_type)
+      return unless @current_route
+
+      if current_retrieval_type == new_retrieval_type
+        warn "account retrieved multiple times during rodauth route with retrieval type #{current_retrieval_type}"
+      else
+        raise Error, "account retrieved multiple times during rodauth route, original retrieval type: #{current_retrieval_type}, new retrieval type: #{new_retrieval_type}"
+      end
+    end
+
+    def set_account(account, retrieval_type)
+      account_reload(@account_retrieval_type, retrieval_type) if @account_retrieval_type
+      @account_retrieval_type = retrieval_type
+      @account = account
+    end
 
     def database_function_password_match?(name, hash_id, password, salt)
       db.get(Sequel.function(function_name(name), hash_id, password_hash_using_salt(password, salt)))
@@ -731,7 +769,7 @@ module Rodauth
     end
 
     def require_account_session
-      unless account_from_session
+      unless (@account_retrieval_type == :session ? account : account_from_session)
         clear_session
         login_required
       end
@@ -789,25 +827,25 @@ module Rodauth
       when :postgres, :mysql, :mssql
         true
       else
-        # :nocov:
+        # simplecov:disable
         false
-        # :nocov:
+        # simplecov:enable
       end
     end
 
     def use_request_specific_csrf_tokens?
-      scope.opts[:rodauth_route_csrf] && scope.use_request_specific_csrf_tokens?
+      scope.class.rodauth_route_csrf? && scope.use_request_specific_csrf_tokens?
     end
 
     def check_csrf?
-      scope.opts[:rodauth_route_csrf]
+      scope.class.rodauth_route_csrf?
     end
 
     def function_name(name)
       if db.database_type == :mssql
-        # :nocov:
+        # simplecov:disable
         "dbo.#{name}"
-        # :nocov:
+        # simplecov:enable
       else
         name
       end
@@ -823,12 +861,16 @@ module Rodauth
       if account_password_hash_column
         account[account_password_hash_column] if account!
       elsif use_database_authentication_functions?
-        db.get(Sequel.function(function_name(:rodauth_get_salt), account ? account_id : session_value))
+        db.get(Sequel.function(function_name(:rodauth_get_salt), account_id_or_session_value))
       else
-        # :nocov:
+        # simplecov:disable
         password_hash_ds.get(password_hash_column)
-        # :nocov:
+        # simplecov:enable
       end
+    end
+
+    def new_password_matches_current_password?(password)
+      password_match?(password)
     end
 
     def _account_from_login(login)
@@ -895,7 +937,7 @@ module Rodauth
     end
 
     def password_hash_ds
-      db[password_hash_table].where(password_hash_id_column=>account ? account_id : session_value)
+      db[password_hash_table].where(password_hash_id_column=>account_id_or_session_value)
     end
 
     # This is needed for jdbc/sqlite, which returns timestamp columns as strings
@@ -934,9 +976,9 @@ module Rodauth
     # UniqueConstraintViolation.
     def unique_constraint_violation_class
       if db.adapter_scheme == :jdbc && db.database_type == :sqlite
-        # :nocov:
+        # simplecov:disable
         Sequel::ConstraintViolation
-        # :nocov:
+        # simplecov:enable
       else
         Sequel::UniqueConstraintViolation
       end
@@ -952,9 +994,9 @@ module Rodauth
     # CURRENT_TIMESTAMP.
     def set_deadline_value(hash, column, interval)
       if set_deadline_values?
-        # :nocov:
+        # simplecov:disable
         hash[column] = Sequel.date_add(Sequel::CURRENT_TIMESTAMP, interval)
-        # :nocov:
+        # simplecov:enable
       end
     end
 
@@ -968,9 +1010,21 @@ module Rodauth
       false
     end
 
-    # :nocov:
+    def valid_return_to_path?(path)
+      path[0] == "/" &&
+        path[1] != "/" &&
+        path.bytesize <= return_to_path_max_size
+    end
+
+    def set_session_return_to_path(session_key, path=request.fullpath)
+      if request.get? && valid_return_to_path?(path)
+        set_session_value(session_key, path)
+      end
+    end
+
+    # simplecov:disable
     if RUBY_VERSION >= '4.0'
-    # :nocov:
+    # simplecov:enable
       def instance_variables_to_inspect
         instance_variables.reject{|v| instance_variable_get(v).nil?}
       end

@@ -14,10 +14,11 @@ if ENV.delete('COVERAGE')
   require 'simplecov'
 
   SimpleCov.start do
-    enable_coverage :branch
-    add_filter{|f| f.filename.match(%r{\A#{Regexp.escape(File.dirname(__FILE__))}/})}
-    add_group('Missing'){|src| src.covered_percent < 100}
-    add_group('Covered'){|src| src.covered_percent == 100}
+    coverage :line
+    coverage :branch
+    cover "lib/**/*.rb"
+    skip{|src| src.filename.end_with?('lib/rodauth/migrations.rb')}
+    group('Missing'){|src| src.covered_percent < 100}
   end
 end
 
@@ -214,6 +215,9 @@ class Minitest::HooksSpec
     json_only = type == :json || type == :json_no_enable
     json = type == :json || type == :json_html || type == :json_no_enable
     json_enable = type == :json || type == :json_html
+    allow_already_logged_in = @allow_already_logged_in
+    skip_domain = @skip_domain
+    skip_hmac_secret = @skip_hmac_secret
 
     app = Class.new(jwt_only ? JsonBase : Base)
     begin
@@ -234,6 +238,10 @@ class Minitest::HooksSpec
 
     if json || jwt
       opts[:json] = jwt_only ? :only : true
+    end
+
+    if json || jwt || (type.is_a?(Hash) && type[:json])
+      app.plugin :json_parser, :content_type_regexp=>/\Aapplication\/(?:vnd\.api\+)?json\b/i
     end
 
     if type == :no_csrf || (!USE_ROUTE_CSRF && (json || jwt))
@@ -262,6 +270,15 @@ class Minitest::HooksSpec
       if RODAUTH_ALWAYS_ARGON2
         enable :argon2
       end
+      unless allow_already_logged_in
+        already_logged_in do
+          unless defined?(Rodauth::InternalRequest) && is_a?(Rodauth::InternalRequest)
+            raise "already logged in"
+          end
+        end
+      end
+      domain "www.example.com" unless skip_domain
+      hmac_secret "123" unless skip_hmac_secret
       instance_exec(&rodauth_block)
     end
     unless json_only || jwt_only
@@ -423,7 +440,7 @@ class Minitest::HooksSpec
     r[2].each{|s| body << s}
     r[2] = body
 
-    if env["CONTENT_TYPE"] == "application/json"
+    if env["CONTENT_TYPE"] == "application/json" && env["REQUEST_METHOD"] != "OPTIONS"
       r[1][CONTENT_TYPE_KEY].must_equal 'application/json'
       r[2] = JSON.parse("[#{body}]").first
     end

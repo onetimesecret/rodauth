@@ -4,7 +4,7 @@ describe 'Rodauth jwt_cors feature' do
   it "should support CORS logins if allowed" do
     origin = false
     rodauth do
-      enable :login, :jwt_cors
+      enable :login, :jwt_cors, :logout
       jwt_secret '1'
       json_response_success_key 'success'
       jwt_cors_allow_origin{origin}
@@ -23,7 +23,6 @@ describe 'Rodauth jwt_cors feature' do
         "HTTP_ACCESS_CONTROL_REQUEST_METHOD"=>"POST",
         "HTTP_ORIGIN"=>"https://foo.example.com",
         "HTTP_ACCESS_CONTROL_REQUEST_HEADERS"=>"content-type",
-        "CONTENT_TYPE"=>' application/json'
       }
     }
 
@@ -48,13 +47,16 @@ describe 'Rodauth jwt_cors feature' do
       header(res, 'Access-Control-Allow-Origin').must_equal "https://foo.example.com"
       header(res, 'Access-Control-Allow-Methods').must_equal "POST"
       header(res, 'Access-Control-Allow-Headers').must_equal "Content-Type, Authorization, Accept"
+      header(res, 'Vary').must_equal "Origin"
       header(res, 'Access-Control-Max-Age').must_equal "86400"
       res[2].must_equal ""
 
+      json_request("/logout")
       res = json_request("/login", :login=>'foo@example.com', :password=>'0123456789', :headers=>{"HTTP_ORIGIN"=>"https://foo.example.com"}, :include_headers=>true)
       res[0].must_equal 200
       header(res, 'Access-Control-Allow-Origin').must_equal "https://foo.example.com"
       header(res, 'Access-Control-Expose-Headers').must_equal "Authorization"
+      header(res, 'Vary').must_equal "Origin"
       res[2].must_equal("success"=>"You have been logged in")
 
       json_request("/foo").must_equal [200, 1]

@@ -141,4 +141,47 @@ describe 'Rodauth password grace period feature' do
     click_button 'Change Login'
     page.find('#notice_flash').text.must_equal "Your login has been changed"
   end
+
+  it "should not extend grace period trying to change password using existing password" do
+    rodauth do
+      enable :login, :change_password, :password_grace_period
+    end
+    roda do |r|
+      r.rodauth
+      r.get "grace-period-get" do
+        session[rodauth.last_password_entry_session_key].to_s
+      end
+      r.get "grace-period-set" do
+        session[rodauth.last_password_entry_session_key] = Time.now.to_i - 100
+        ''
+      end
+      r.root do
+        view :content=>"Not Logged In"
+      end
+    end
+
+    login
+
+    visit '/grace-period-set'
+    visit '/grace-period-get'
+    t = Integer(page.body, 10)
+
+    visit '/change-password'
+    fill_in 'New Password', :with=>'0123456789'
+    fill_in 'Confirm Password', :with=>'0123456789'
+    click_button 'Change Password'
+    page.find('#error_flash').text.must_equal "There was an error changing your password"
+    page.body.must_include 'invalid password, same as current password'
+    page.current_path.must_equal '/change-password'
+
+    visit '/grace-period-get'
+    Integer(page.body, 10).must_equal t
+
+    visit '/change-password'
+    fill_in 'New Password', :with=>'012345678'
+    fill_in 'Confirm Password', :with=>'012345678'
+    click_button 'Change Password'
+    page.find('#notice_flash').text.must_equal "Your password has been changed"
+    page.current_path.must_equal '/'
+  end
 end

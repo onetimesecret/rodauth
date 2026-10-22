@@ -187,6 +187,33 @@ describe 'Rodauth password_pepper feature' do
     end
   end
 
+  it "should disallow login for concurrent password changes" do
+    pepper = ""
+    bad_existing_salt = false
+    rodauth do
+      enable :login, :logout, :password_pepper
+      password_pepper { pepper }
+      set_password do |v|
+        @existing_password_hash_or_salt = '1' if bad_existing_salt
+        super(v)
+      end
+    end
+    roda do |r|
+      r.rodauth
+      next unless rodauth.logged_in?
+      r.root{view :content=>"Logged In"}
+    end
+
+    login
+    page.html.must_include "Logged In"
+
+    pepper = "pepper"
+    bad_existing_salt = true
+    logout
+    login
+    page.find("#error_flash").text.must_equal "There was an error logging in"
+  end
+
   it "should work with disallow_password_reuse feature" do
     pepper = nil
     previous_peppers = [""]
@@ -252,6 +279,40 @@ describe 'Rodauth password_pepper feature' do
     visit '/change-password'
     fill_in 'New Password', :with=>"password_1"
     fill_in 'Confirm Password', :with=>"password_1"
+    click_on 'Change Password'
+    page.find('#notice_flash').text.must_equal "Your password has been changed"
+  end
+
+  it "should consider password pepper bytes when deciding whether to allow password" do
+    pepper = "a"
+    rodauth do
+      enable :login, :logout, :password_pepper, :change_password
+      password_pepper{pepper}
+      change_password_requires_password? false
+      require_password_confirmation? false
+      password_maximum_bytes 72
+    end
+    roda do |r|
+      r.rodauth
+      next unless rodauth.logged_in?
+      r.root{view :content=>"Logged In"}
+    end
+
+    login
+    page.html.must_include "Logged In"
+
+    visit '/change-password'
+    fill_in 'New Password', :with=>"a"*71
+    click_on 'Change Password'
+    page.find('#notice_flash').text.must_equal "Your password has been changed"
+
+    visit '/change-password'
+    fill_in 'New Password', :with=>"b"*72
+    click_on 'Change Password'
+    page.find('#error_flash').text.must_equal "There was an error changing your password"
+
+    pepper = nil
+    fill_in 'New Password', :with=>"c"*72
     click_on 'Change Password'
     page.find('#notice_flash').text.must_equal "Your password has been changed"
   end

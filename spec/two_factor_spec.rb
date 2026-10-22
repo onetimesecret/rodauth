@@ -611,8 +611,51 @@ describe 'Rodauth two factor feature' do
     fill_in 'Authentication Code', :with=>totp.now
     click_button 'Authenticate Using TOTP'
     page.find('#notice_flash').text.must_equal 'You have been multifactor authenticated'
+    page.current_path.must_equal "/page"
     page.html.must_include "Passed Authentication Required: bar"
+
+    logout
+    reset_otp_last_use
+    login
+    visit "/page?foo=#{'bar'*2048}"
+    page.current_path.must_equal '/otp-auth'
+    fill_in 'Authentication Code', :with=>totp.now
+    click_button 'Authenticate Using TOTP'
+    page.find('#notice_flash').text.must_equal 'You have been multifactor authenticated'
+    page.current_path.must_equal "/"
   end
+
+  it "should not allow OTP reuse by exploiting allowed drift" do
+    rodauth do
+      enable :login, :logout, :otp
+      otp_drift 90
+    end
+    roda do |r|
+      r.rodauth
+      r.root{view :content=>""}
+    end
+
+    login
+
+    visit '/otp-setup'
+    secret = page.html.match(/Secret: ([a-z2-7]{#{secret_length}})/)[1]
+    totp = ROTP::TOTP.new(secret)
+    t = Time.now - 31
+    totp_code = totp.at(t)
+    fill_in 'Password', :with=>'0123456789'
+    fill_in 'Authentication Code', :with=>totp_code
+    click_button 'Setup TOTP Authentication'
+    page.find('#notice_flash').text.must_equal 'TOTP authentication is now setup'
+
+    logout
+    DB[:account_otp_keys].update(:last_use=>t)
+    login
+
+    visit '/otp-auth'
+    fill_in 'Authentication Code', :with=>totp_code
+    click_button 'Authenticate Using TOTP'
+    page.find('#error_flash').text.must_equal 'Error logging in via TOTP authentication'
+  end unless ROTP::TOTP.method_defined?(:verify_with_drift)
 
   it "should handle attempts to insert a duplicate recovery code" do
     keys = ['a', 'a', 'b']
@@ -1142,6 +1185,60 @@ describe 'Rodauth two factor feature' do
     res.must_equal [200, {}]
   end
 
+  it "should fail when using a recovery code that was concurrently deleted" do
+    rodauth do
+      enable :login, :logout, :recovery_codes
+      recovery_code_match? do |code|
+        recovery_codes.sort!
+        recovery_codes_ds.where(recovery_codes_column=>recovery_codes[0]).delete
+        super(code)
+      end
+    end
+    roda(:json_html) do |r|
+      r.rodauth
+
+      r.redirect '/login' unless rodauth.logged_in?
+
+      if rodauth.two_factor_authentication_setup?
+        r.redirect '/recovery-auth' unless rodauth.authenticated?
+        view :content=>"With OTP"
+      else    
+        view :content=>"Without OTP"
+      end
+    end
+
+    login
+    page.html.must_include('Without OTP')
+
+    visit '/recovery-auth'
+    page.find('#error_flash').text.must_equal 'This account has not been setup for multifactor authentication'
+    page.current_path.must_equal '/recovery-codes'
+
+    page.title.must_equal 'View Authentication Recovery Codes'
+    fill_in 'Password', :with=>'012345678'
+    click_button 'View Authentication Recovery Codes'
+    page.find('#error_flash').text.must_equal 'Unable to view recovery codes'
+    page.html.must_include 'invalid password'
+
+    fill_in 'Password', :with=>'0123456789'
+    click_button 'View Authentication Recovery Codes'
+    page.title.must_equal 'Authentication Recovery Codes'
+    recovery_codes = find('#recovery-codes').text.split
+    recovery_codes.length.must_equal 0
+    fill_in 'Password', :with=>'0123456789'
+    click_button 'Add Authentication Recovery Codes'
+    recovery_codes = find('#recovery-codes').text.split
+    recovery_codes.length.must_equal 16
+    recovery_code = recovery_codes.sort.first
+
+    logout
+    login
+    fill_in 'Recovery Code', :with=>recovery_code
+    click_button 'Authenticate via Recovery Code'
+    page.find('#error_flash').text.must_equal 'Error authenticating via recovery code'
+    page.html.must_include 'Invalid recovery code'
+  end
+
   it "should have sms_codes work when used by itself" do
     sms_code, sms_phone, sms_message = nil
     rodauth do
@@ -1329,6 +1426,7 @@ describe 'Rodauth two factor feature' do
         json_response_success_key do
           success_key
         end
+        domain "example.com"
       end
       roda(json) do |r|
         r.rodauth
@@ -1623,6 +1721,7 @@ describe 'Rodauth two factor feature' do
       enable :login, :otp, :logout
       before_otp_auth_route{before_called = true}
       before_otp_setup_route{otp}
+      hmac_secret nil
     end
     roda do |r|
       r.rodauth
@@ -1899,9 +1998,11 @@ describe 'Rodauth two factor feature' do
   end
 
   it "should allow using otp via internal requests without hmac" do
+    @skip_hmac_secret = true
     rodauth do
       enable :login, :logout, :otp, :internal_request
       domain 'example.com'
+      auth_class_eval{define_method(:warn){|_|}}
     end
     roda do |r|
     end

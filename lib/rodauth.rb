@@ -1,12 +1,15 @@
 # frozen-string-literal: true
 
 require 'securerandom'
+require 'roda'
 
 module Rodauth
   OPTS = {}.freeze
   SCOPE_INSTANCE_VARIABLES = [:@_rodauths, :@_rodauth].freeze
 
   class ConfigurationError < StandardError; end
+  class Error < StandardError; end
+  class SetPasswordFailure < Error; end
 
   def self.lib(opts=OPTS, &block) 
     require 'roda'
@@ -20,7 +23,7 @@ module Rodauth
   end
 
   def self.load_dependencies(app, opts=OPTS, &_)
-    json_opt = opts.fetch(:json, app.opts[:rodauth_json])
+    json_opt = opts.fetch(:json){app.opts[:rodauth_json]}
     if json_opt
       app.plugin :json
       app.plugin :json_parser
@@ -32,13 +35,13 @@ module Rodauth
         app.plugin :render
       end
 
-      case opts.fetch(:csrf, app.opts[:rodauth_csrf])
+      case opts.fetch(:csrf){app.opts[:rodauth_csrf]}
       when false
         # nothing
       when :rack_csrf
-        # :nocov:
+        # simplecov:disable
         app.plugin :csrf
-        # :nocov:
+        # simplecov:enable
       else
         app.plugin :route_csrf
       end
@@ -49,22 +52,23 @@ module Rodauth
   end
 
   def self.configure(app, opts=OPTS, &block)
-    json_opt = app.opts[:rodauth_json] = opts.fetch(:json, app.opts[:rodauth_json])
-    csrf = app.opts[:rodauth_csrf] = opts.fetch(:csrf, app.opts[:rodauth_csrf])
+    json_opt = app.opts[:rodauth_json] = opts.fetch(:json){app.rodauth_json}
+    csrf = app.opts[:rodauth_csrf] = opts.fetch(:csrf){app.opts[:rodauth_csrf]}
     app.opts[:rodauth_route_csrf] = case csrf
     when false, :rack_csrf
       false
     else
       json_opt != :only
     end
-    auth_class = (app.opts[:rodauths] ||= {})[opts[:name]] ||= opts[:auth_class] || Class.new(Auth)
+    name = opts[:name]
+    auth_class = (app.opts[:rodauths] ||= {})[name] ||= opts[:auth_class] || Class.new(Auth)
     if !auth_class.roda_class
       auth_class.roda_class = app
     elsif auth_class.roda_class != app
-      auth_class = app.opts[:rodauths][opts[:name]] = Class.new(auth_class)
+      auth_class = app.rodauths[name] = Class.new(auth_class)
       auth_class.roda_class = app
     end
-    auth_class.class_eval{@configuration_name = opts[:name] unless defined?(@configuration_name)}
+    auth_class.class_eval{@configuration_name = name unless defined?(@configuration_name)}
     auth_class.configure(&block) if block
     auth_class.send(:make_shape_friendly)
     auth_class.allocate.post_configure if auth_class.method_defined?(:post_configure)
@@ -184,9 +188,9 @@ module Rodauth
       feature.module_eval(&block)
       configuration.def_configuration_methods(feature)
 
-      # :nocov:
+      # simplecov:disable
       if constant
-      # :nocov:
+      # simplecov:enable
         Rodauth.const_set(constant, feature)
         Rodauth::FeatureConfiguration.const_set(constant, configuration)
       end
@@ -209,9 +213,9 @@ module Rodauth
     if RUBY_VERSION >= '2.5'
       DEPRECATED_ARGS = [{:uplevel=>1}]
     else
-      # :nocov:
+      # simplecov:disable
       DEPRECATED_ARGS = []
-      # :nocov:
+      # simplecov:enable
     end
     def def_deprecated_alias(new, old)
       configuration_module_eval do
@@ -346,7 +350,7 @@ module Rodauth
       auth_private_methods(meth)
     end
 
-    # :nocov:
+    # simplecov:disable
     def auth_cached_method(meth, iv=:"@#{meth}") # :nodoc:
       # Non-shape friendly historical method.
       # RODAUTH3: Remove
@@ -361,7 +365,7 @@ module Rodauth
       alias_method(meth, meth)
       auth_private_methods(meth)
     end
-    # :nocov:
+    # simplecov:enable
 
     [:notice_flash, :error_flash, :button].each do |meth|
       define_method(meth) do |v, name=feature_name|
@@ -375,11 +379,11 @@ module Rodauth
 
     def initialize(auth, &block)
       @auth = auth
-      # :nocov:
+      # simplecov:disable
       # Only for backwards compatibility
       # RODAUTH3: Remove
       apply(&block) if block
-      # :nocov:
+      # simplecov:enable
     end
 
     def apply(&block)
@@ -469,12 +473,12 @@ module Rodauth
 
           ivs
         end
-      # :nocov:
+      # simplecov:disable
       else
         def make_shape_friendly # :nodoc:
         end
       end
-      # :nocov:
+      # simplecov:enable
     end
 
     def self.inherited(subclass)
@@ -517,8 +521,28 @@ module Rodauth
   end
 
   module ClassMethods
+    if Roda::RodaPlugins.respond_to?(:opt_attr_reader)
+      Roda::RodaPlugins.opt_attr_reader(self, :rodauths)
+      Roda::RodaPlugins.opt_attr_reader(self, :rodauth_json)
+      Roda::RodaPlugins.opt_attr_reader(self, :rodauth_route_csrf, name: :rodauth_route_csrf?)
+    # simplecov:disable
+    else
+      def rodauths
+        opts[:rodauths]
+      end
+
+      def rodauth_json
+        opts[:rodauth_json]
+      end
+
+      def rodauth_route_csrf?
+        opts[:rodauth_route_csrf]
+      end
+    # simplecov:enable
+    end
+
     def rodauth(name=nil)
-      opts[:rodauths][name]
+      rodauths[name]
     end
 
     def precompile_rodauth_templates
@@ -538,8 +562,8 @@ module Rodauth
     end
 
     def freeze
-      opts[:rodauths].each_value(&:freeze)
-      opts[:rodauths].freeze
+      rodauths.each_value(&:freeze)
+      rodauths.freeze
       super
     end
   end

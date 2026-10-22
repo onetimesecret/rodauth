@@ -5,7 +5,7 @@ describe 'Rodauth reset_password feature' do
     it "should support resetting passwords for accounts, for #{hmac_type}" do
       last_sent_column = nil
       rodauth do
-        enable :login, :reset_password
+        enable :login, :reset_password, :logout
         case hmac_type
         when :hmac
           hmac_secret '1'
@@ -14,6 +14,7 @@ describe 'Rodauth reset_password feature' do
           allow_raw_email_token? true
         end
         reset_password_email_last_sent_column{last_sent_column}
+        convert_token_id { |v| raise unless v; v }
       end
       roda do |r|
         r.rodauth
@@ -31,6 +32,9 @@ describe 'Rodauth reset_password feature' do
       link = email_link(/(\/reset-password\?key=.+)$/)
 
       visit '/reset-password'
+      page.find('#error_flash').text.must_equal "There was an error resetting your password: invalid or expired password reset key"
+
+      visit '/reset-password?key='
       page.find('#error_flash').text.must_equal "There was an error resetting your password: invalid or expired password reset key"
 
       visit link[0...-1]
@@ -106,6 +110,7 @@ describe 'Rodauth reset_password feature' do
       login(:pass=>'0123456')
       page.current_path.must_equal '/'
 
+      logout
       login(:pass=>'bad')
       click_link "Forgot Password?"
       fill_in "Login", :with=>"foo@example.com"
@@ -169,7 +174,7 @@ describe 'Rodauth reset_password feature' do
 
   it "invalides login change verify links after password reset" do
     rodauth do
-      enable :login, :verify_login_change, :reset_password
+      enable :login, :verify_login_change, :reset_password, :logout
       change_login_requires_password? false
       require_login_confirmation? false
       require_password_confirmation? false
@@ -182,12 +187,14 @@ describe 'Rodauth reset_password feature' do
 
     login
 
+    logout
     visit '/login'
     login(:pass=>'01234567', :visit=>false)
     click_button 'Request Password Reset'
     page.find('#notice_flash').text.must_equal "An email has been sent to you with a link to reset the password for your account"
     reset_password_link = email_link(/(\/reset-password\?key=.+)$/)
 
+    login
     visit '/change-login'
     fill_in 'Login', :with=>'foo3@example.com'
     click_button 'Change Login'
@@ -197,6 +204,7 @@ describe 'Rodauth reset_password feature' do
     visit verify_login_change_link
     page.title.must_equal 'Verify Login Change'
 
+    logout
     visit reset_password_link
     fill_in 'Password', :with=>'012345678911'
     click_button "Reset Password"
@@ -230,6 +238,54 @@ describe 'Rodauth reset_password feature' do
   end
 
   [true, false].each do |before|
+    [true, false, nil].each do |use_json|
+      desc = if use_json
+        "#{before ? "before" : "after"} json with use_json? #{use_json}"
+      else
+        next if before
+        "without json"
+      end
+
+      it "should fail for POST requests without session, when loading reset_password #{desc}" do
+        rodauth do
+          features = [:json, :reset_password]
+          features.shift if use_json.nil?
+          features.reverse! if before
+          enable(*features)
+          require_password_confirmation? false
+          before_reset_password_route do
+            if request.request_method == "POST"
+              session.delete(reset_password_session_key)
+              @rpr = true
+            end
+          end
+          unless use_json.nil?
+            use_json? do
+              if @rpr
+                @rpr = false
+                use_json
+              else
+                super() 
+              end
+            end
+          end
+        end
+        roda do |r|
+          r.rodauth
+          r.root{view :content=>rodauth.logged_in? ? "Logged In" : "Not Logged"}
+        end
+
+        login(:pass=>'01234567')
+
+        click_button 'Request Password Reset'
+        visit email_link(/(\/reset-password\?key=.+)$/)
+        fill_in 'Password', :with=>'0123456'
+        click_button 'Reset Password'
+        page.find('#error_flash').text.must_equal "There was an error resetting your password"
+        page.body.must_include("Not Logged")
+      end
+    end
+
     it "should clear reset password token when closing account, when loading reset_password #{before ? "before" : "after"}" do
       rodauth do
         features = [:close_account, :reset_password]

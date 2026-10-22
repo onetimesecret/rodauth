@@ -74,6 +74,7 @@ password_label :: The label to use for passwords.
 password_param :: The parameter name to use for passwords.
 require_login_error_flash :: The flash error to display when accessing a page that requires a login, when you are not logged in.
 require_login_redirect :: A redirect to the login page.
+return_to_path_max_size :: The maximum path size in bytes to allow when returning to requested location (login, two_factor_base, confirm_password), 2048 by default to avoid exceeding the 4K cookie size limit
 set_deadline_values? :: Whether deadline values should be set.  True by default on MySQL, as that doesn't support default values that are not constant.  Can be set to true on other databases if you want to vary the value based on a request parameter.
 strftime_format :: The format to pass to Time#strftime when formatting timestamps to display to the user, '%F %T' by default.
 template_opts :: Any template options to pass to view/render.  This can be used to set a custom layout, for example.
@@ -92,6 +93,7 @@ account_from_id(id, status_id=nil) :: Retrieve the account hash for the given ac
 account_from_login(login) :: Retrieve the account hash related to the given login or nil if no login matches.
 account_from_session :: Retrieve the account hash related to the currently logged in session.
 account_id :: The primary key value of the current account.
+account_reload(old_type, new_type) :: What to do when loading an account when one is already loaded. The arguments are the retrieval types. By default, does nothing for non-rodauth routes, and for rodauth routes, warns if old_type and new_type are the same (this indicates unnecessary reloading), and raises if they are different (to avoid potential account confusion).
 account_session_value :: The primary value of the current account to store in the session when logging in.
 after_login :: Run arbitrary code after a successful login.
 after_no_matching_login :: Run arbitrary code after a login failure due to an invalid login.
@@ -103,7 +105,8 @@ before_login :: Run arbitrary code after password has been checked, but before u
 before_login_attempt :: Run arbitrary code after an account has been located, but before the password has been checked.
 before_rodauth :: Run arbitrary code before handling any rodauth route, but after CSRF checks if Rodauth is doing CSRF checks.
 check_csrf :: Checks CSRF token using Roda's +check_csrf!+ method.
-clear_session :: Clears the current session.
+clear_session :: Clears the current session. For Roda's session plugin uses +clear_session+ on the Roda scope. Otherwise, does +session.clear+. If you are using a session implementation based on Rack::Session::Abstract::Persisted, first consider an alternative, and if you decide not to use an alternative you should set this to <tt>session.options[:renew] = true; super()</tt> or you can be vulnerable to session fixation.
+missing_recommended_configuration(msg) :: The action to take if the Rodauth configuration does not include recommended configuration methods, warns by default.
 convert_token_id(id) :: Convert the token id string to an appropriate object to use for the token id (or return +nil+ to signal an invalid token id).  By default, converts to a 64-bit signed integer if +convert_token_id_to_integer?+ is true.
 csrf_tag(path=request.path) :: The HTML fragment containing the CSRF tag to use, if any.
 function_name(name) :: The name of the database function to call.  It's passed either :rodauth_get_salt or :rodauth_valid_password_hash.
@@ -126,3 +129,4 @@ set_title(title) :: Set the title of the page to the given title.
 translate(key, default_value) :: Return a translated version for the key (uses the default value by default).
 unverified_account_message :: The message to use when attempting to login to an unverified account.
 update_session :: Clear the session, then set the session key to the primary key of the current account.
+valid_return_to_path?(path) :: Whether the path given is a valid return to path. By default, must start with <tt>/</tt>, cannot start with <tt>//</tt>, and must be under +return_to_path_max_size+ bytes.

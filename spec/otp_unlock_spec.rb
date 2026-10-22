@@ -41,6 +41,7 @@ describe 'Rodauth otp_unlock feature' do
     visit '/otp-unlock'
     page.title.must_equal 'Setup TOTP Authentication'
 
+    logout
     login
     visit '/otp-setup'
     page.title.must_equal 'Setup TOTP Authentication'
@@ -147,6 +148,7 @@ describe 'Rodauth otp_unlock feature' do
         use_json?{use_json}
         only_json?{use_json}
         set_error_reason { |reason| json_response['reason'] = reason }
+        hmac_secret nil
       end
       roda(json) do |r|
         r.rodauth

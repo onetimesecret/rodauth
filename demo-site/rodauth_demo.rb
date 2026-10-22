@@ -48,7 +48,7 @@ class App < Roda
 
   plugin :rodauth, :json=>true, :csrf=>:route_csrf do
     db DB
-    enable :change_login, :change_password, :close_account, :create_account,
+    enable :change_login, :change_password, :close_account_email, :create_account,
            :lockout, :login, :logout, :remember, :reset_password_verifies_account,
            :otp_modify_email, :otp_lockout_email, :recovery_codes, :sms_codes, :disallow_common_passwords,
            :disallow_password_reuse, :password_grace_period, :active_sessions, :jwt,
@@ -61,8 +61,13 @@ class App < Roda
     account_password_hash_column :ph
     title_instance_variable :@page_title
     only_json? false
+    check_csrf? false
     jwt_secret(secret)
     hmac_secret secret
+    already_logged_in{redirect '/'}
+    if demo_domain = ENV["RODAUTH_DEMO_DOMAIN"]
+      domain demo_domain
+    end
     sms_send do |phone_number, message|
       MUTEX.synchronize{SMS[session_value] = "Would have sent the following SMS to #{phone_number}: #{message}"}
     end
@@ -86,7 +91,7 @@ class App < Roda
     MUTEX.synchronize{MAILS.delete(rodauth.session_value)}
   end
 
-  after do
+  after do |_|
     Mail::TestMailer.deliveries.each do |mail|
       MUTEX.synchronize{MAILS[rodauth.session_value] = mail}
     end
@@ -94,7 +99,7 @@ class App < Roda
   end
 
   route do |r|
-    check_csrf! unless r.env['CONTENT_TYPE'] =~ /application\/json/
+    check_csrf! unless r.env['CONTENT_TYPE'] =~ /\Aapplication\/json\b/
     rodauth.load_memory
     rodauth.check_active_session
     r.rodauth

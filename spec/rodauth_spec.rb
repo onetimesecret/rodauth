@@ -1,6 +1,11 @@
 require_relative 'spec_helper'
 
 describe 'Rodauth' do
+  it "Rodauth.version should return version" do
+    require 'rodauth/version'
+    Rodauth.version.must_match(/\A\d+\.\d+\.\d+\z/)
+  end
+
   it "should not include nil instance variables in inspect output" do
     rodauth{}
     roda do |r|
@@ -10,6 +15,171 @@ describe 'Rodauth' do
     visit '/'
     page.body.wont_include "=nil"
   end if RUBY_VERSION >= "4"
+
+  it "should warn if a domain is required but not set" do
+    @skip_domain = true
+    warning = nil
+    rodauth do
+      enable :require_domain
+      auth_class_eval{define_method(:warn){|msg| warning = msg}}
+    end
+    warning.must_be_nil
+    roda{|_|}
+    warning.must_equal "The Rodauth 'domain' configuration method was not used. This can potentially leave the application vulnerable to requests that use malicious or invalid domains."
+  end
+
+  it "should not warn if a domain is required but is set" do
+    warning = nil
+    rodauth do
+      enable :require_domain
+      auth_class_eval{define_method(:warn){|msg| warning = msg}}
+    end
+    roda{|_|}
+    warning.must_be_nil
+  end
+
+  it "should warn if an hmac_secret is required but not set" do
+    @skip_hmac_secret = true
+    warning = nil
+    rodauth do
+      enable :require_hmac_secret
+      auth_class_eval{define_method(:warn){|msg| warning = msg}}
+    end
+    warning.must_be_nil
+    roda{|_|}
+    warning.must_equal "The Rodauth 'hmac_secret' configuration method was not used. This significantly reduces Rodauth's security. Consult the Rodauth README for what this method does, and set an appropriate value."
+  end
+
+  it "should not warn if an hmac_secret is required but is set" do
+    warning = nil
+    rodauth do
+      enable :require_hmac_secret
+      auth_class_eval{define_method(:warn){|msg| warning = msg}}
+    end
+    roda{|_|}
+    warning.must_be_nil
+  end
+
+  it "should not warn if already_logged_in is required but is set" do
+    warning = nil
+    rodauth do
+      enable :login
+      auth_class_eval{define_method(:warn){|msg| warning = msg}}
+    end
+    roda{|_|}
+    warning.must_be_nil
+  end
+
+  it "should allow already logged in if explicitly configured" do
+    @allow_already_logged_in = true
+    warning = nil
+    rodauth do
+      enable :login
+      # already_logged_in{} # RODAUTH3: Remove @allow_already_logged_in and uncomment
+      auth_class_eval{define_method(:warn){|msg| warning = msg}}
+    end
+    warning.must_be_nil
+    roda do |r|
+      r.rodauth
+      ""
+    end
+    warning.must_equal "The Rodauth 'already_logged_in' configuration method was not used. Use the configuration method to define the behavior when accessing a page while logged in that is expected to be accessed when not logged in (safest to halt or redirect)."
+
+    login
+    login
+  end
+
+  it "should not warn or raise for account reloading for non-rodauth routes" do
+    rodauth do
+      enable :login
+      auth_class_eval do
+        define_method(:warn){|msg| raise msg}
+      end
+    end
+    roda do |r|
+      r.rodauth
+
+      r.get "a" do
+        rodauth.account_from_login('foo@example.com')
+        rodauth.account_from_session
+        'a'
+      end
+
+      ''
+    end
+
+    login
+    visit '/a'
+    page.body.must_equal 'a'
+  end
+
+  it "should warn for account reloading for same type rodauth routes by default" do
+    warning = nil
+    rodauth do
+      enable :login, :change_password
+      modifications_require_password? false
+      require_password_confirmation? false
+      before_change_password{account_from_session}
+      auth_class_eval do
+        define_method(:warn){|msg| warning = msg}
+      end
+    end
+    roda do |r|
+      r.rodauth
+      ""
+    end
+
+    login
+    visit "/change-password"
+    fill_in 'New Password', :with=>'012323466'
+    warning.must_be_nil
+    click_button 'Change Password'
+    warning.must_equal "account retrieved multiple times during rodauth route with retrieval type session"
+  end
+
+  it "should not retrieve account again in require_account if already retrieved from session" do
+    warning = nil
+    rodauth do
+      enable :login, :change_password, :otp
+      account_password_hash_column :ph
+      auth_class_eval do
+        define_method(:warn){|msg| warning = msg}
+      end
+    end
+    roda do |r|
+      r.rodauth
+      ""
+    end
+
+    login
+    visit "/change-password"
+    page.title.must_equal 'Change Password'
+    warning.must_be_nil
+  end
+
+  it "should prevent account reloading for separate types during rodauth routes by default" do
+    rodauth do
+      enable :login
+      after_login{account_from_session}
+    end
+    roda do |r|
+      r.rodauth
+    end
+
+    proc{login}.must_raise(Rodauth::Error).message.must_equal "account retrieved multiple times during rodauth route, original retrieval type: login, new retrieval type: session"
+  end
+
+  it "should prevent account reloading during rodauth routes by default" do
+    rodauth{}
+    roda do |r|
+      rodauth.account_from_login("foo2@example.com")
+      rodauth.session[rodauth.session_key] = 1
+      rodauth.send(:account_id_or_session_value).inspect
+    end
+
+    visit '/'
+    page.body.must_equal "nil"
+  end
 
   it "should keep private methods private when overridden" do
     rodauth do
@@ -122,7 +292,7 @@ describe 'Rodauth' do
     end
   end
 
-  it "should alstringlow overriding fixed_locals via template_opts" do
+  it "should allow overriding fixed_locals via template_opts" do
     rodauth do
       enable :login
       template_opts(template_opts: {fixed_locals: "()"})
@@ -235,6 +405,7 @@ describe 'Rodauth' do
     base = Class.new(Rodauth::Auth) do
       configure do
         enable :login, :path_class_methods
+        already_logged_in{raise}
       end
     end
 
@@ -279,6 +450,7 @@ describe 'Rodauth' do
     base = Class.new(Rodauth::Auth) do
       configure do
         enable :login, :path_class_methods, :internal_request
+        already_logged_in{raise}
 
         internal_request_configuration do
           login_page_title { super() + " - Base" }
@@ -582,7 +754,7 @@ describe 'Rodauth' do
       roda do |r|
         r.rodauth
       end
-      dir = 'spec/views2'
+      dir = "spec/views-tmp-#{$$}"
       file = "#{dir}/login.str"
       app.plugin :render, :views=>dir, :engine=>'str'
       Dir.mkdir(dir) unless File.directory?(dir)
@@ -788,11 +960,7 @@ describe 'Rodauth' do
     end
 
     visit '/'
-    if RODAUTH_ALWAYS_ARGON2
-      page.body.must_equal 'login_password_requirements_base,argon2,login,create_account,email_base,verify_account'
-    else
-      page.body.must_equal 'login,login_password_requirements_base,create_account,email_base,verify_account'
-    end
+    page.body.must_equal "login#{RODAUTH_ALWAYS_ARGON2 ? "_password_requirements_base,argon2,login" : ",login_password_requirements_base"},create_account,require_domain,require_hmac_secret,email_base,verify_account"
   end
 
   it "should allow enabling custom features that have already been loaded" do
@@ -890,6 +1058,7 @@ describe 'Rodauth' do
       app.plugin(:rodauth, rodauth_opts) do
         enable :argon2 if RODAUTH_ALWAYS_ARGON2
         enable :login
+        already_logged_in{raise}
         if ENV['RODAUTH_SEPARATE_SCHEMA']
           password_hash_table Sequel[:rodauth_test_password][:account_password_hashes]
           function_name do |name|
@@ -1198,6 +1367,7 @@ describe 'Rodauth' do
     auth_class = Class.new(Rodauth::Auth) do
       configure do
         enable :internal_request, :login
+        already_logged_in{raise}
       end
     end
 
@@ -1235,8 +1405,10 @@ describe 'Rodauth' do
   end
 
   it "should raise error unless domain is set" do
+    @skip_domain = true
     rodauth do
       enable :login, :logout, :verify_account, :internal_request
+      auth_class_eval{define_method(:warn){|_|}}
     end
     roda do |r|
       r.rodauth
@@ -1474,6 +1646,7 @@ describe 'Rodauth' do
   end
 
   it "should raise argument error when hmac_secret is missing but required" do
+    @skip_hmac_secret = true
     rodauth do
     end
     roda do |r|
