@@ -194,7 +194,7 @@ module Rodauth
       # are 1/256**32 assuming a good random number generator.  Still, attempt to handle that case by retrying
       # on such a uniqueness violation.
       retry_on_uniqueness_violation do
-        recovery_codes_ds.insert(recovery_codes_id_column=>session_value, recovery_codes_column=>new_recovery_code)
+        recovery_codes_ds.insert(recovery_codes_id_column=>account_id_or_session_value, recovery_codes_column=>new_recovery_code)
       end
     end
 
@@ -267,7 +267,7 @@ module Rodauth
     end
 
     def recovery_codes_ds
-      db[recovery_codes_table].where(recovery_codes_id_column=>session_value)
+      db[recovery_codes_table].where(recovery_codes_id_column=>account_id_or_session_value)
     end
   end
 end
