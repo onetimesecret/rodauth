@@ -100,6 +100,7 @@ describe 'Rodauth verify_account feature' do
     click_button 'Verify Account'
     page.find('#notice_flash').text.must_equal "Your account has been verified"
     page.current_path.must_equal '/'
+    DB[:account_verification_keys].must_be :empty?
 
     login(:login=>'foo@example2.com')
     page.find('#notice_flash').text.must_equal 'You have been logged in'
