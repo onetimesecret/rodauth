@@ -122,6 +122,43 @@ describe 'Rodauth webauthn_verify_account feature' do
     page.html.must_include 'Not Logged In'
   end
 
+  it "should add recovery codes to the verified account when verifying accounts if auto_add_recovery_codes? is true" do
+    rodauth do
+      enable :webauthn_verify_account, :recovery_codes
+      hmac_secret '123'
+      auto_add_recovery_codes? true
+    end
+    first_request = nil
+    roda do |r|
+      first_request ||= r
+      r.rodauth
+      r.root{view :content=>rodauth.authenticated_by ? "Logged In via #{rodauth.authenticated_by.join(' and ')}" : 'Not Logged In'}
+    end
+
+    visit '/create-account'
+    origin = first_request.base_url
+    webauthn_client = WebAuthn::FakeClient.new(origin)
+
+    fill_in 'Login', :with=>'foo@example2.com'
+    click_button 'Create Account'
+    page.find('#notice_flash').text.must_equal "An email has been sent to you with a link to verify your account"
+
+    link = email_link(/(\/verify-account\?key=.+)$/, 'foo@example2.com')
+
+    visit link
+    challenge = JSON.parse(page.find('#webauthn-setup-form')['data-credential-options'])['challenge']
+    fill_in 'webauthn_setup', :with=>webauthn_client.create(challenge: challenge).to_json
+    click_button 'Setup WebAuthn Authentication'
+    page.find('#notice_flash').text.must_equal "Your account has been verified"
+    page.html.must_include 'Logged In via webauthn'
+
+    account_id = DB[:accounts].where(:email=>'foo@example2.com').get(:id)
+    DB[:account_webauthn_keys].where(:account_id=>account_id).count.must_equal 1
+    DB[:account_recovery_codes].where(:id=>account_id).count.must_equal 16
+    DB[:account_recovery_codes].count.must_equal 16
+    DB[:account_verification_keys].must_be :empty?
+  end
+
   [:jwt, :json].each do |json|
     it "should allow webauthn setup when verifying accounts via #{json}" do
       rodauth do

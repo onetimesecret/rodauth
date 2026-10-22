@@ -1,5 +1,9 @@
 === master
 
+* Make recovery_codes feature use the loaded account if there is one, fixing webauthn_verify_account with auto_add_recovery_codes? (delano)
+
+* Delete verify account key instead of rotating it when verifying an account (delano)
+
 * Fix change_password when update_password_hash updates the password hash in the same request (fedegl, jeremyevans) (#520)
 
 * Avoid loading the account twice when generating login form footer links if the initial account load failed (janko) (#519)

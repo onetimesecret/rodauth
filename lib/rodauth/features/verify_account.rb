@@ -249,7 +249,8 @@ module Rodauth
 
     def clear_tokens(reason)
       super
-      if reason == :close_account
+      case reason
+      when :close_account, :verify_account
         remove_verify_account_key
       else
         generate_verify_account_key_value
