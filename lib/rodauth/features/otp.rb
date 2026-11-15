@@ -100,7 +100,7 @@ module Rodauth
       :otp_valid_code_for_old_secret
     )
 
-    uses_instance_variables(:@otp, :@otp_key, :@otp_user_key, :@otp_tmp_key)
+    uses_instance_variables(:@otp, :@otp_key, :@otp_user_key, :@otp_tmp_key, :@otp_verify_time)
 
     internal_request_method :otp_setup_params
     internal_request_method :otp_setup
@@ -275,14 +275,14 @@ module Rodauth
           otp.verify_with_drift(ot_pass, drift)
         # simplecov:enable
         else
-          otp.verify(ot_pass, :drift_behind=>drift, :drift_ahead=>drift, :after=>otp_last_use)
+          @otp_verify_time = otp.verify(ot_pass, :drift_behind=>drift, :drift_ahead=>drift, :after=>otp_last_use)
         end
       # simplecov:disable
       elsif otp.respond_to?(:verify_with_drift)
         otp.verify(ot_pass)
       # simplecov:enable
       else
-        otp.verify(ot_pass, :after=>otp_last_use)
+        @otp_verify_time = otp.verify(ot_pass, :after=>otp_last_use)
       end
     end
 
@@ -297,9 +297,10 @@ module Rodauth
     end
 
     def otp_update_last_use
+      verify_time = @otp_verify_time.is_a?(Integer) ? Time.at(@otp_verify_time) : Sequel::CURRENT_TIMESTAMP # simplecov:disable
       otp_key_ds.
-        where(Sequel.date_add(otp_keys_last_use_column, :seconds=>_otp_interval) < Sequel::CURRENT_TIMESTAMP).
-        update(otp_keys_last_use_column=>Sequel::CURRENT_TIMESTAMP) == 1
+        where(Sequel.date_add(otp_keys_last_use_column, :seconds=>_otp_interval) <= verify_time).
+        update(otp_keys_last_use_column=>verify_time) == 1
     end
 
     def otp_last_use
@@ -440,9 +441,10 @@ module Rodauth
     end
 
     def _otp_add_key(secret)
+      verify_time = @otp_verify_time.is_a?(Integer) ? Time.at(@otp_verify_time) : Sequel::CURRENT_TIMESTAMP # simplecov:disable
       # Uniqueness errors can't be handled here, as we can't be sure the secret provided
       # is the same as the current secret.
-      otp_key_ds.insert(otp_keys_id_column=>session_value, otp_keys_column=>secret)
+      otp_key_ds.insert(otp_keys_id_column=>session_value, otp_keys_column=>secret, otp_keys_last_use_column=>verify_time)
     end
 
     def _otp_key

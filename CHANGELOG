@@ -4,6 +4,18 @@
 
 * Delete verify account key instead of rotating it when verifying an account (delano)
 
+* Allow otp code for the next time step after the last use in the otp feature (wktk) (#524)
+
+* Disallow returning to requested path if path starts with /\ (jeremyevans)
+
+=== 2.50.0 (2026-11-02)
+
+* [SECURITY] Make otp feature prevent otp code reuse by using result of ROTP verify (jeremyevans)
+
+* Don't insert duplicate logout audit log when account is already loaded in the audit_logging feature (matas-zanevicius) (#522)
+
+=== 2.49.0 (2026-10-22)
+
 * Fix change_password when update_password_hash updates the password hash in the same request (fedegl, jeremyevans) (#520)
 
 * Avoid loading the account twice when generating login form footer links if the initial account load failed (janko) (#519)
